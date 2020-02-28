@@ -1,0 +1,747 @@
+---
+title: "Master Thesis appendix"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+library(readxl)
+library(tidyverse)
+library(rvest)
+library(haven)
+library(lubridate)
+library(skimr)
+`%notin%` <- Negate(`%in%`)
+Sys.setlocale(locale = "sv_SE.UTF-8")
+```
+
+# Elections
+## Scraping election data
+```{r Election data, echo=TRUE, message=FALSE, warning=FALSE}
+
+# Data ----------------------------------------------------------------------------------------
+# Common
+pop <- read_excel("scrape_sweden/pop_sweden_1950-2019.xlsx", 
+                  skip = 5) %>% slice(1:290) %>% select(municipality = Kommun,`2002`,`2006`,`2010`,`2014`,`2018`) 
+ID <- read_excel("scrape_sweden/kommunlankod27.xls", 
+                 skip = 5) %>% select(municipality = Name,
+                                      ID = Code,
+                                      province = ...3,
+                                      province_ID = ...5) %>%
+  filter(!str_detect(municipality," län")) %>%
+  mutate(muni_ID = ID)
+
+
+# 2006 ----------------------------------------------------------------------------------------
+# Import
+elections_sweden <- read_html("https://data.val.se/val/val2006/slutlig/K/rike/delar.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+elections_sweden <- elections_sweden[[1]]
+elections_sweden <- elections_sweden %>% 
+  gather(party,vote_share,2:9) %>% 
+  arrange(Område) %>% 
+  select(municipality = Område,
+         party,
+         vote_share,
+         turnout = VDT) %>%
+  filter(!party == "ÖVR") %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality))
+
+
+#Clean away dashes and commas, make data into numeric values 
+for(j in 3:ncol(elections_sweden)){
+  elections_sweden[,j]=sub("%", "", elections_sweden[,j], fixed = TRUE)
+  elections_sweden[,j]=as.numeric(sub(",", ".", elections_sweden[,j], fixed = TRUE))
+}
+
+other <- read_excel("scrape_sweden/election_2006.xls", 
+                    sheet = "Tabell 9", skip = 6) %>% slice(6:373) %>%
+  select(municipality = Kommun,
+         party = ...2,
+         votes = Antal,
+         vote_share = `% av samtliga giltiga röster`,
+         seats_won = Totalt) %>%
+  filter(!is.na(vote_share)) %>%
+  mutate(municipality = if_else(municipality == "Heby2", "Heby", municipality)) %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality)) %>%
+  mutate(party = if_else(party == "Sverigedemokraterna", "SD", party)) %>%
+  mutate(party = if_else(party == "SPI - Sveriges Pensionärers Intresseparti", "SPI", party)) %>% 
+  fill(municipality)
+
+
+elections_sweden <- merge(elections_sweden, pop, by = "municipality", all = TRUE)
+elections_sweden <- elections_sweden %>% select(-`2010`,-`2014`,-`2018`,-`2002`) %>%
+  rename(pop = `2006`)
+elections_sweden <- merge(elections_sweden, ID, by = "municipality", all = TRUE)
+
+#Seats        
+mandates <- read_html("https://data.val.se/val/val2006/slutlig_ovrigt/statistik/kommun/mandat_kommun_parti.html") %>%
+  html_table(header = TRUE, fill = TRUE) %>%
+  first() %>% filter(Kommun != "SUMMA") %>%
+  gather(party,seats_won,2:11) %>% 
+  rename(municipality = Kommun,
+         mandates = TOT) %>% 
+  separate_rows(seats_won, sep = ", ") %>% #These could be split into separate rows using gsub and regular expressions
+  na_if("") %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality)) %>%
+  group_by(municipality) %>%
+  mutate(nParties = sum(!is.na(seats_won))) %>%
+  filter(!is.na(seats_won)) %>%
+  arrange(municipality)
+
+local <- merge(elections_sweden,mandates, by = c("municipality", "party"), all = TRUE)
+
+local <- local %>% mutate(cname = "Sweden",
+                          ccode = "SE",
+                          date = "2006-09-17",
+                          clevel = "municipality")
+
+voter <- read_excel("scrape_sweden/election_2006.xls", 
+                    sheet = "Tabell 7", skip = 5) %>% 
+  select(municipality = ...1,
+         eligible_voters = ...3,
+         total_voters = ...5,
+         valid_votes = ...10,
+         M=m,C=c,FP=fp,KD=kd,MP=mp,S=s,V=v,ÖVR=övr)%>%
+  mutate(municipality = if_else(municipality == "Heby2", "Heby", municipality)) %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality)) %>%
+  filter(!str_detect(municipality," län")) %>% #NOTE space before län! if not, removes the muni Borlänge
+  filter(!is.na(municipality)) %>% 
+  filter(municipality != "Hela riket") %>%
+  slice(-291:-293) %>%
+  gather(party,votes,5:12) %>%
+  arrange(municipality)
+
+local <- merge(local,voter, by = c("municipality", "party"), all = TRUE) %>% 
+  filter(!party == "SD") %>%
+  filter(!party == "ÖVR")
+local <- merge(local, other, by = c("municipality","votes","party","vote_share","seats_won"), all = TRUE) %>% 
+  arrange(municipality, turnout)
+local <- local %>% mutate(seats_won = ifelse(is.na(seats_won), 0, seats_won)) %>% 
+  fill(turnout:valid_votes) %>% 
+  select(cname, ccode, date, clevel, turnout, ID,
+         province_ID, province, muni_ID, municipality, pop, eligible_voters, total_voters,
+         valid_votes, party, votes, vote_share, seats_won, mandates, nParties) %>%
+  arrange(date, municipality, desc(vote_share))
+
+sweden <- local
+
+
+
+# 2010 ----------------------------------------------------------------------------------------
+# Import
+elections_sweden <- read_html("https://data.val.se/val/val2010/slutresultat/K/rike/index.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+elections_sweden <- elections_sweden[[2]]
+
+elections_sweden <- elections_sweden[,c(1,2,4,6,8,10,12,14,16,18,20,22,24)] %>%
+  gather(party,vote_share, 2:9) %>%
+  arrange(Område) %>% 
+  select(municipality = Område,
+         party,
+         vote_share,
+         turnout = VDT) %>% 
+  filter(!municipality == "Sverige")
+
+
+votes <- read_html("https://data.val.se/val/val2010/slutresultat/K/rike/index.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+votes <- votes[[2]]
+votes <- votes[,c(1,3,5,7,9,11,13,15,17)] %>%
+  gather(party,votes, 2:9) %>%
+  rename(municipality = Område)%>% 
+  filter(!municipality == "Sverige")
+elections_sweden <- merge(elections_sweden, votes, by = c("municipality", "party"))
+
+#Clean away dashes and commas, make data into numeric values 
+for(j in 3:ncol(elections_sweden)){
+  elections_sweden[,j]=sub("%", "", elections_sweden[,j], fixed = TRUE)
+  elections_sweden[,j]=as.numeric(sub(",", ".", elections_sweden[,j], fixed = TRUE))
+}
+
+#Getting the non-national parties
+other <- read_excel("scrape_sweden/election_2010.xls", 
+                    sheet = "Tabell 11", skip = 11) %>%
+  select(municipality = `Stockholms län`,
+         party = ...3,
+         votes = ...4,
+         vote_share = ...5,
+         seats_won = ...9)%>%
+  filter(!is.na(vote_share)) %>%
+  fill(municipality) %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality))
+
+elections_sweden <- merge(elections_sweden, other, by = c("municipality","party","votes","vote_share"), all = TRUE)
+elections_sweden <- elections_sweden %>% arrange(municipality, turnout) %>%
+  fill(turnout)
+
+#Seats for national parties        
+mandates <- read_html("https://data.val.se/val/val2010/slutresultat/K/rike/valda.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+mandates <- mandates[[2]] %>% filter(Område != "Sverige") %>%
+  gather(party,seats_won,2:9) %>% 
+  rename(municipality = Område,
+         mandates = TOT) %>% 
+  group_by(municipality) %>%
+  mutate(nParties = sum(!is.na(seats_won))) %>%
+  mutate(seats_won = ifelse(is.na(seats_won),0,seats_won)) %>%
+  arrange(municipality) %>% select(-ÖVR)
+
+#Merge seats and all other election data
+local <- merge(elections_sweden,mandates, by = c("municipality", "party"), all = TRUE)
+local <- local %>% mutate(seats_won = if_else(is.na(seats_won.x), seats_won.y, seats_won.x))%>%
+  select(-seats_won.x, -seats_won.y) %>% arrange(municipality, mandates) %>%
+  fill(mandates:nParties)
+
+
+#generate the static variables
+local <- local %>% mutate(cname = "Sweden",
+                          ccode = "SE",
+                          date = "2010-09-19",
+                          clevel = "municipality")
+#pop data and IDs
+local <- merge(local, pop, by = "municipality", all = TRUE)
+local <- local %>% select(-`2006`,-`2014`,-`2018`,-`2002`) %>%
+  rename(pop = `2010`)
+local <- merge(local, ID, by = "municipality", all = TRUE)
+
+#Voter data
+voter <- read_excel("scrape_sweden/election_2010.xls", 
+                    sheet = "Tabell 9", skip = 5) %>% 
+  select(municipality = ...1,
+         eligible_voters = `berät-`,
+         total_voters = ...5,
+         valid_votes = giltiga) %>%
+  slice(7:336) %>%
+  filter(!str_detect(municipality," län")) %>% #NOTE space before län! if not, removes the muni Borlänge
+  filter(!is.na(municipality)) %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality))
+
+local <- merge(local,voter, by = "municipality", all = TRUE)
+
+#reorder and arrange
+local <- local %>% select(cname, ccode, date, clevel, turnout, ID,
+                          province_ID, province, muni_ID, municipality, pop, eligible_voters, total_voters,
+                          valid_votes, party, votes, vote_share, seats_won, mandates, nParties) %>%
+  arrange(date, municipality, desc(vote_share))
+
+sweden <- rbind(sweden, local)
+
+
+# 2014 ----------------------------------------------------------------------------------------
+# Import
+elections_sweden <- read_html("https://data.val.se/val/val2014/slutresultat/K/rike/index.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+elections_sweden <- elections_sweden[[2]]
+
+elections_sweden <- elections_sweden[,c(1,2,4,6,8,10,12,14,16,18,20,22,24,26)] %>%
+  gather(party,vote_share, 2:10) %>%
+  arrange(Område) %>% 
+  select(municipality = Område,
+         party,
+         vote_share,
+         turnout = VDT)%>% 
+  filter(!municipality == "Sverige")
+
+votes <- read_html("https://data.val.se/val/val2014/slutresultat/K/rike/index.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+votes <- votes[[2]]
+votes <- votes[,c(1,3,5,7,9,11,13,15,17,19)] %>%
+  gather(party,votes, 2:10) %>% #Fi!
+  rename(municipality = Område) %>% 
+  filter(!municipality == "Sverige")
+
+elections_sweden <- merge(elections_sweden, votes, by = c("municipality", "party"))
+rm(votes)
+
+#Clean away dashes and commas, make data into numeric values 
+for(j in 3:ncol(elections_sweden)){
+  elections_sweden[,j]=sub("%", "", elections_sweden[,j], fixed = TRUE)
+  elections_sweden[,j]=as.numeric(sub(",", ".", elections_sweden[,j], fixed = TRUE))
+}
+rm(j)
+
+#Getting the non-national parties
+other <- read_excel("scrape_sweden/election_2014.xlsx", 
+                    sheet = "Tabell 11", skip = 11) %>%
+  select(municipality = `Stockholms län`,
+         party = ...3,
+         votes = ...4,
+         vote_share = ...5,
+         seats_won = ...9)%>%
+  filter(!is.na(vote_share)) %>% 
+  filter(!party == "Feministiskt initiativ")%>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality))
+
+elections_sweden <- merge(elections_sweden, other, by = c("municipality","party","votes","vote_share"), all = TRUE)
+elections_sweden <- elections_sweden %>% arrange(municipality, turnout) %>%
+  fill(turnout)
+rm(other)
+
+#Seats for national parties        
+mandates <- read_html("https://data.val.se/val/val2014/slutresultat/K/rike/valda.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+mandates <- mandates[[2]] %>% filter(Område != "Sverige") %>%
+  gather(party,seats_won,2:10) %>% #Fi!
+  rename(municipality = Område,
+         mandates = TOT) %>% 
+  group_by(municipality) %>%
+  mutate(nParties = sum(!is.na(seats_won))) %>%
+  mutate(seats_won = ifelse(is.na(seats_won),0,seats_won)) %>%
+  arrange(municipality) %>% select(-ÖVR)
+
+#Merge seats and all other election data
+local <- merge(elections_sweden,mandates, by = c("municipality", "party"), all = TRUE)
+local <- local %>% mutate(seats_won = if_else(is.na(seats_won.x), seats_won.y, seats_won.x))%>%
+  select(-seats_won.x, -seats_won.y) %>% arrange(municipality, mandates) %>%
+  fill(mandates:nParties)
+rm(mandates)
+
+#generate the static variables
+local <- local %>% mutate(cname = "Sweden",
+                          ccode = "SE",
+                          date = "2014-09-14",
+                          clevel = "municipality")
+#pop data and IDs
+local <- merge(local, pop, by = "municipality", all = TRUE)
+local <- local %>% select(-`2006`,-`2010`,-`2018`,-`2002`) %>%
+  rename(pop = `2014`)
+local <- merge(local, ID, by = "municipality", all = TRUE)
+
+#Voter data
+voter <- read_excel("scrape_sweden/election_2014.xlsx", 
+                    sheet = "Tabell 9", skip = 5) %>% 
+  select(municipality = ...1,
+         eligible_voters = `berät-`,
+         total_voters = ...3,
+         valid_votes = giltiga) %>%
+  slice(7:336) %>%
+  filter(!str_detect(municipality," län")) %>% #NOTE space before län! if not, removes the muni Borlänge
+  filter(!is.na(municipality)) %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality))
+
+local <- merge(local,voter, by = "municipality", all = TRUE)
+rm(voter)
+
+#reorder and arrange
+local <- local %>% select(cname, ccode, date, clevel, turnout, ID,
+                          province_ID, province, muni_ID, municipality, pop, eligible_voters, total_voters,
+                          valid_votes, party, votes, vote_share, seats_won, mandates, nParties) %>%
+  arrange(date, municipality, desc(vote_share))
+
+sweden <- rbind(sweden, local)
+
+
+# 2018 ----------------------------------------------------------------------------------------
+# Import
+elections_sweden <- read_html("https://data.val.se/val/val2018/slutresultat/K/rike/index.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+elections_sweden <- elections_sweden[[2]]
+elections_sweden <- elections_sweden[,c(1,2,4,6,8,10,12,14,16,18,20,22,24,26,28)] %>%
+  gather(party,vote_share, 2:10) %>%
+  arrange(Område) %>% 
+  select(municipality = Område,
+         party,
+         vote_share,
+         turnout = VDT)%>% 
+  filter(!municipality == "Sverige")
+
+votes <- read_html("https://data.val.se/val/val2018/slutresultat/K/rike/index.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+votes <- votes[[2]]
+votes <- votes[,c(1,3,5,7,9,11,13,15,17,19)] %>%
+  gather(party,votes, 2:10) %>% #Fi!
+  rename(municipality = Område)%>% 
+  filter(!municipality == "Sverige")
+elections_sweden <- merge(elections_sweden, votes, by = c("municipality", "party"))
+rm(votes)
+
+#Clean away dashes and commas, make data into numeric values 
+for(j in 3:ncol(elections_sweden)){
+  elections_sweden[,j]=sub("%", "", elections_sweden[,j], fixed = TRUE)
+  elections_sweden[,j]=as.numeric(sub(",", ".", elections_sweden[,j], fixed = TRUE))
+}
+rm(j)
+
+#Getting the non-national parties
+other <- read_excel("scrape_sweden/other_2018.xlsx", skip = 11) %>%
+  select(municipality = `Stockholms län`,
+         party = ...3,
+         votes = ...4,
+         vote_share = ...5,
+         seats_won = ...9)%>%
+  filter(!is.na(vote_share))%>%
+  filter(!party == "Feministiskt initiativ") %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality))
+
+elections_sweden <- merge(elections_sweden, other, by = c("municipality","party","votes","vote_share"), all = TRUE)
+elections_sweden <- elections_sweden %>% arrange(municipality, turnout) %>%
+  fill(turnout)
+rm(other)
+
+#Seats for national parties        
+mandates <- read_html("https://data.val.se/val/val2018/slutresultat/K/rike/valda.html") %>%
+  html_table(header = TRUE, fill = TRUE)
+mandates <- mandates[[2]] %>% filter(Område != "Sverige") %>%
+  gather(party,seats_won,2:10) %>% #Fi!
+  rename(municipality = Område,
+         mandates = TOT) %>% 
+  group_by(municipality) %>%
+  mutate(seats_won = ifelse(is.na(seats_won),0,seats_won)) %>%
+  arrange(municipality) %>% select(-ÖVR)
+
+#Merge seats and all other election data
+local <- merge(elections_sweden,mandates, by = c("municipality", "party"), all = TRUE)
+local <- local %>% mutate(seats_won = if_else(is.na(seats_won.x), seats_won.y, seats_won.x))%>%
+  select(-seats_won.x, -seats_won.y) %>% arrange(municipality, mandates) %>% 
+  fill(mandates)
+rm(mandates)
+
+#generate the static variables
+local <- local %>% mutate(cname = "Sweden",
+                          ccode = "SE",
+                          date = "2018-09-09",
+                          clevel = "municipality")
+#pop data and IDs
+local <- merge(local, pop, by = "municipality", all = TRUE)
+local <- local %>% select(-`2006`,-`2010`,-`2014`,-`2002`) %>%
+  rename(pop = `2018`)
+local <- merge(local, ID, by = "municipality", all = TRUE)
+
+#Voter data
+voter <- read_excel("scrape_sweden/election_2018.xlsx", 
+                    skip = 5) %>% 
+  select(municipality = ...1,
+         eligible_voters = tigade,
+         total_voters = ...3,
+         valid_votes = `val-`) %>%
+  slice(6:388) %>%
+  mutate(municipality = if_else(municipality == "Malung", "Malung-Sälen",municipality)) %>%
+  filter(municipality %in% ID$municipality)
+
+local <- merge(local,voter, by = "municipality", all = TRUE)
+rm(voter)
+
+local <- local %>% group_by(municipality) %>% 
+  mutate(seatsCount = ifelse(seats_won == 0, NA, seats_won)) %>%
+  mutate(nParties = sum(!is.na(seatsCount))) %>% ungroup()
+
+#reorder and arrange
+local <- local %>% select(cname, ccode, date, clevel, turnout, ID,
+                          province_ID, province, muni_ID, municipality, pop, eligible_voters, total_voters,
+                          valid_votes, party, votes, vote_share, seats_won, mandates, nParties) %>%
+  arrange(date, municipality, desc(vote_share))
+
+sweden <- rbind(sweden, local)
+rm(local)
+rm(elections_sweden)
+
+sweden <- sweden %>%  mutate(party = if_else(party == "FP", "L", party)) %>% select(-cname,-ccode,-clevel)
+
+
+# 2002 ----------------------------------------------------------------------------------------
+#missing local parties
+# 2002
+elections_sweden <- read_excel("scrape_sweden/2002_votes.xlsx", skip = 3) %>% 
+  select(muni_ID = ...1,
+         municipality = ...2,
+         party = ...3,
+         votes = `2002...5`,
+         vote_share = `2002...6`) %>%
+  fill(muni_ID,municipality) %>%
+  slice(1:3201) %>%
+  filter(municipality != "Bara")
+
+votes <- elections_sweden %>% group_by(municipality) %>%
+  mutate(eligible_voters = sum(votes)) %>%
+  filter(party != "VALSKOLKARE") %>% 
+  mutate(total_voters = sum(votes)) %>%
+  filter(party != "OGILTIGA") %>%
+  mutate(valid_votes = sum(votes)) %>%
+  mutate(turnout = total_voters/eligible_voters) %>%
+  filter(party == "M") %>%
+  filter(municipality != "Bara") %>%
+  select(muni_ID, municipality, eligible_voters:turnout)
+
+elections_sweden <- merge(elections_sweden, votes, by = c("muni_ID", "municipality"))     
+rm(votes)
+
+mandates <- read_excel("scrape_sweden/2002_mandates.xlsx", skip = 1) %>% 
+  select(muni_ID = ...1,
+         municipality = ...2,
+         party = ...3,
+         seats_won = `2002`) %>%
+  fill(muni_ID,municipality) %>%
+  slice(1:2619) %>%
+  mutate(seats_won = as.integer(seats_won)) %>%
+  group_by(municipality) %>%
+  mutate(mandates = sum(seats_won)) %>%
+  filter(!is.na(seats_won))
+
+elections_sweden <- merge(elections_sweden, mandates, by = c("muni_ID", "municipality", "party"))
+rm(mandates)
+
+elections_sweden <- merge(elections_sweden, pop, by = "municipality", all = TRUE)
+elections_sweden <- elections_sweden %>% select(-`2006`,-`2010`,-`2014`,-`2018`) %>%
+  rename(pop = `2002`)
+elections_sweden <- merge(elections_sweden, ID, by = c("municipality","muni_ID"), all = TRUE)
+
+elections_sweden <- elections_sweden %>%
+  mutate(date = "2002-09-15",
+         nParties = NA,
+         party = if_else(party == "FP", "L", party)) %>%
+  select(date, turnout, ID,
+         province_ID, province, muni_ID, municipality, pop, eligible_voters, total_voters,
+         valid_votes, party, votes, vote_share, seats_won, mandates, nParties)
+sweden <- rbind(sweden, elections_sweden)
+rm(elections_sweden)
+
+# misc ----------------------------------------------------------------------------------------
+sweden <- sweden %>% mutate(turnout = as.numeric(turnout),
+                            eligible_voters = as.integer(eligible_voters),
+                            valid_votes = as.integer(valid_votes),
+                            votes = as.integer(votes),
+                            vote_share = as.numeric(vote_share),
+                            seats_won = as.integer(seats_won))
+procurement <- read_dta("./Data/procurement/bdf_replication.dta")
+```
+
+## Audit and naming of chair in the auditing commitee 
+http://www.statistikdatabasen.scb.se/sq/82272, 1 = minority chairman, 0 = majority 
+```{r Revision, message=FALSE}
+audit <- read_excel("./scrape_sweden/audit.xlsx", skip = 2, na ="..") %>% 
+  rename(muni_ID=...1,
+         municipality = ...2) %>%
+  slice(1:290) %>%
+  gather(year, auditor,3:6) %>% 
+  mutate(auditor = ifelse(auditor==1, "minority",auditor)) %>% 
+  mutate(auditor = ifelse(auditor==0, "majority",auditor)) %>%
+  arrange(muni_ID, year)
+```
+
+
+
+
+# Other
+## Chairman desiscions
+```{r}
+chairman_des <- read_excel("Ordförandebeslut.xlsx") %>% filter(!is.na(Kommun)) %>% 
+  rename(year = År) %>%
+  mutate(Beslut = as.integer(Beslut))
+
+chair_sum <- chairman_des %>% group_by(Kommun, year) %>%  summarise(nDes = sum(Beslut))
+chair_NA <- chairman_des %>% filter(is.na(Beslut))
+qplot(chair_NA$year, geom = "histogram",
+      binwidth = 1,
+      xlab = "Distribution of NAs")
+
+muni_no <- read_excel("Ordförandebeslut.xlsx", sheet = "NEJ", col_names = F) %>% select(denied = `...1`)
+muni_no <- unique(muni_no$denied)
+muni_yes <- unique(chairman_des$Kommun)
+muni_both <- muni_yes[(muni_yes %in% muni_no)]
+
+#Municipalities who gave information
+length(muni_yes)
+
+#Municipalities who gave information from some boards, and denied from others
+length(muni_both)
+
+#Municipalities who denied
+length(muni_no)
+
+muni_reply <- unique(append(muni_yes, muni_no))
+290-length(muni_reply)
+missing <- ID %>% filter(municipality %notin% muni_reply) %>% arrange(municipality)
+missing$municipality
+
+#Clean the environment a bit from unused vars
+rm(muni_both, muni_no, muni_reply, muni_yes, missing)
+```
+
+### filter out groups with too many NAs
+```{r}
+count_yes <- chairman_des %>% group_by(Kommun) %>% tally(!is.na(Beslut)) %>% rename(yes = n)
+count_na <- chairman_des %>% group_by(Kommun) %>% tally(is.na(Beslut)) %>% rename(NAs = n)
+count_complete <- bind_cols(count_na, count_yes) %>%  select(-Kommun1) %>% 
+  mutate(share_na = (NAs/yes)*100)
+
+#clean environment
+rm(count_yes, count_na)
+
+chairman_filter <- count_complete %>% filter(share_na < 20)
+
+chairman_processed <- chairman_des %>% 
+  filter(Kommun %in% chairman_filter$Kommun) %>%
+  filter(!Nämnd == "Västra hisingen - Individ") %>% # Filter outlier
+  group_by(Kommun, year) %>%
+  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
+  summarize(Beslut = sum(Beslut)) %>% 
+  group_by(Kommun) %>% 
+  mutate(has_na = any(is.na(Beslut))) %>%  #Create a variable for filtering NaNs
+  ungroup() %>% 
+  filter(!has_na) %>%
+  select(-has_na)
+```
+
+
+```{r}
+chairman_des %>% 
+  filter(Kommun == "Göteborg") %>%
+  group_by(Kommun, year) %>%
+  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
+  summarise(beslut = sum(Beslut)) %>%
+  ggplot(aes(year, beslut))+
+  geom_point()
+
+chairman_des %>% 
+  filter(Kommun == "Göteborg") %>%
+  filter(Nämnd != "Västra hisingen - Individ") %>%
+  group_by(Kommun, year) %>%
+  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
+  summarise(decisions = sum(Beslut)) %>%
+  ggplot(aes(year, decisions))+
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  ggtitle("Number of decisions made by chairman between meetings", "2002-2019, Gothenburg Municipality")
+```
+
+## Majorities
+```{r}
+majorities <- read_excel("Majorities.xlsx", skip = 1, na = c("", "..")) %>%
+  rename(muni_id = `...1`,
+         muni = `...2`,
+         n2002_2006 = `Partier i politiska styret, antal`,
+         n2006_2010 = `...4`,
+         n2010_2014 = `...5`,
+         n2014_2018 = `...6`,
+         c_2002_2006 = `Centerpartiet ingår, ja=1, nej=0`,
+         c_2006_2010 = `...8`,
+         c_2010_2014 = `...9`,
+         c_2014_2018 = `...10`,
+         l_2002_2006 = `Folkpartiet ingår, ja=1, nej=0`,
+         l_2006_2010 = `...12`,
+         l_2010_2014 = `...13`,
+         l_2014_2018 = `...14`,
+         k_2002_2006 = `Kristdemokraterna ingår, ja=1, nej=0`, #named k to simplify regex later on, and renamed in last stage
+         k_2006_2010 = `...16`,
+         k_2010_2014 = `...17`,
+         k_2014_2018 = `...18`,
+         g_2002_2006 = `Miljöpartiet ingår, ja=1, nej=0`, #named g to simplify regex later on, and renamed in last stage
+         g_2006_2010 = `...20`,
+         g_2010_2014 = `...21`,
+         g_2014_2018 = `...22`,
+         m_2002_2006 = `Moderaterna ingår, ja=1, nej=0`,
+         m_2006_2010 = `...24`,
+         m_2010_2014 = `...25`,
+         m_2014_2018 = `...26`,
+         s_2002_2006 = `Socialdemokraterna ingår, ja=1, nej=0`,
+         s_2006_2010 = `...28`,
+         s_2010_2014 = `...29`,
+         s_2014_2018 = `...30`,
+         r_2002_2006 = `Sverigedemokraterna ingår, ja=1, nej=0`, #named r to simplify regex later on, and renamed in last stage
+         r_2006_2010 = `...32`,
+         r_2010_2014 = `...33`,
+         r_2014_2018 = `...34`,
+         v_2002_2006 = `Vänsterpartiet ingår, ja=1, nej=0`,
+         v_2006_2010 = `...36`,
+         v_2010_2014 = `...37`,
+         v_2014_2018 = `...38`,
+         x_2002_2006 = `Övriga partier i politiska styret, antal`, #named x to simplify regex later on, and renamed in last stage
+         x_2006_2010 = `...40`,
+         x_2010_2014 = `...41`,
+         x_2014_2018 = `...42`) %>%
+  filter(!is.na(muni_id)) %>%
+  filter(muni %in% chairman_filter$Kommun) %>% #filter out munis that don't have a good enough response
+  mutate(r_2002_2006 = as.character(ifelse(is.na(r_2002_2006), 0, r_2002_2006))) %>%
+  pivot_longer(
+    cols = n2002_2006:x_2014_2018,
+    names_to = "year",
+    values_to = "n") %>%
+  mutate(nc = str_extract(year, '^[nclsmvkgrx]'),
+         year = str_replace(year, '^[nclsmvkgrx]_?', '')) %>%
+  pivot_wider(names_from = nc, values_from = n) %>%
+  rename(SD_part_of_rule = r,
+         MP_part_of_rule = g,
+         KD_part_of_rule = k,
+         nOther = x,
+         nRule = n,
+         C_part_of_rule = c,
+         L_part_of_rule = l,
+         M_part_of_rule = m,
+         S_part_of_rule = s,
+         V_part_of_rule = v) %>%
+  separate(year, c("year",NA)) 
+
+majorities %>% filter(is.na(nRule)) %>% nrow() # Count munis with NA:s. Must be 14, else the entered munis below is wrong number. 
+
+majorities_filtered <- majorities %>%
+  filter(!is.na(nRule)) %>% #filter out muni-years where data is missing
+  bind_rows(tribble( #reenter munis
+    ~muni_id,	~muni,	 ~year,	 ~nRule,	 ~C_part_of_rule,	~L_part_of_rule,	 ~KD_part_of_rule,	 ~MP_part_of_rule, 	~M_part_of_rule, 	~S_part_of_rule, 	~SD_part_of_rule,	 ~V_part_of_rule,	 ~nOther,
+    "0182",	"Nacka",	"2014",	"4",	"1",	"1",	"1",	"0",	"1",	"0",	"0",	"0",	"0",
+    "0761",	"Lessebo",	"2014",	"2",	"1",	"0",	"0",	"0",	"0",	"1",	"0",	"0",	"0",
+    "0834",	"Torsås",	"2014",	"6",	"0",	"1",	"1",	"1",	"1",	"1",	"0",	"1",	"0",
+    "1080",	"Karlskrona",	"2014",	"3",	"1",	"1",	"1",	"0",	"0",	"1",	"0",	"0",	"0",
+    "1445",	"Essunga",	"2014",	"4",	"0",	"0",	"0",	"0",	"0",	"0",	"0",	"0",	"0",
+    "2505",	"Arvidsjaur",	"2014",	"2",	"0",	"0",	"0",	"0",	"0",	"1",	"0",	"1",	"0",
+    "0428",	"Vingåker",	"2010",	"1",	"0",	"0",	"0",	"0",	"0",	"1",	"0",	"0",	"0",
+    "1280",	"Malmö",	"2010",	"3",	"0",	"1",	"0",	"1",	"0",	"1",	"0",	"0",	"0",
+    "1460",	"Bengtsfors",	"2010",	"3",	"0",	"1",	"0",	"1",	"0",	"1",	"0",	"0",	"0",
+    "1470",	"Vara",	"2010",	"5",	"1",	"0",	"1",	"1",	"0",	"1",	"0",	"1",	"0",
+    "1814",	"Lekeberg",	"2010",	"4",	"1",	"1",	"1",	"0",	"1",	"0",	"0",	"0",	"0",
+    "1962",	"Norberg",	"2010",	"2",	"0",	"0",	"0",	"1",	"0",	"1",	"0",	"0",	"0",
+    "2080",	"Falun",	"2010",	"3",	"0",	"0",	"0",	"1",	"0",	"1",	"0",	"1",	"0",
+    "2309",	"Krokom",	"2010",	"5",	"1",	"1",	"1",	"1",	"1",	"0",	"0",	"0",	"0"
+  ))
+```
+
+
+
+
+## Exploratory graphs
+```{r Exploratory analysis, echo=FALSE}
+sweden %>% group_by(date) %>% 
+  filter(party == "SD" & seats_won > 0) %>% 
+  summarise(SD = n()) %>%
+  ggplot(aes(x= date, y= SD)) + 
+  geom_bar(stat = "identity") +
+  ggtitle("Number of muncipalities where Sweden Democrats had atleast one seat") +
+  geom_text(aes(label = SD),nudge_y = 4)
+
+riksdagspartier <- c("V", "S", "MP", "C", "L", "M", "KD", "SD")
+sweden %>% group_by(date) %>% 
+  filter(party %in% riksdagspartier & seats_won > 0) %>% 
+  count(party) %>%
+  mutate(party = fct_relevel(party, riksdagspartier)) %>%
+  ggplot(aes(x=date, y=n, group=party)) +
+  geom_line(aes(color=party))+
+  geom_point(aes(color=party))+
+  ggtitle("Number of muncipalities where parties had atleast one seat")
+
+sweden %>% group_by(date, party) %>% 
+  filter(party %in% riksdagspartier & seats_won > 0) %>% 
+  summarise(total_seats = sum(seats_won)) %>% 
+  mutate(party = fct_relevel(party, riksdagspartier)) %>%
+  #mandates$party <- factor(mandates$party, levels = riksdagspartier) %>%
+  ggplot(aes(x=date, y=total_seats, group=party)) +
+  geom_line(aes(color=party))+
+  geom_point(aes(color=party))+
+  ggtitle("Total municipal seats won")
+
+ggplot(audit, aes(auditor)) + 
+  geom_bar(aes(fill =auditor)) +
+  facet_grid(. ~ year)+
+  ggtitle("Who appoints the chairman of the auditing board?", subtitle = "Split into terms")
+
+chairman_processed %>%
+  ggplot(aes(year, Beslut)) +
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  labs(title = "Bivariate relationship between time and the number of decisions made by the Chairman of the board",
+       subtitle = "Outliers removed, values for municipalities with less than 20 % missing data have been imputated using the within group yearly mean",
+       y = "Number of descicions")
+```
+
