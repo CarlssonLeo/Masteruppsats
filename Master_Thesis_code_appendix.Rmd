@@ -587,28 +587,242 @@ chairman_processed <- chairman_des %>%
 ```
 
 
-```{r}
-chairman_des %>% 
-  filter(Kommun == "Göteborg") %>%
-  group_by(Kommun, year) %>%
-  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
-  summarise(beslut = sum(Beslut)) %>%
-  ggplot(aes(year, beslut))+
-  geom_point()
 
-chairman_des %>% 
-  filter(Kommun == "Göteborg") %>%
-  filter(Nämnd != "Västra hisingen - Individ") %>%
-  group_by(Kommun, year) %>%
-  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
-  summarise(decisions = sum(Beslut)) %>%
-  ggplot(aes(year, decisions))+
-  geom_point() +
-  geom_smooth(method = "lm") + 
-  ggtitle("Number of decisions made by chairman between meetings", "2002-2019, Gothenburg Municipality")
+## Scraping majorities 2018
+From https://sv.wikipedia.org/wiki/Lista_%C3%B6ver_kommun-_och_landstingsstyren_i_Sverige_2018%E2%80%932022, 
+```{r Majorities 2018, echo=TRUE, message=FALSE, warning=FALSE}
+url <- "https://sv.wikipedia.org/wiki/Lista_över_kommun-_och_landstingsstyren_i_Sverige_2018-2022"
+#Blekinge
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(2) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- df
+
+#Dalarna
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(4) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Gotland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(5) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#gävleborg
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(7) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Halland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(9) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Jämtland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(11) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Jönköping
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(13) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#kronoberg
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(17) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#norrbotten
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(19) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Stockholm
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(23) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Södermanland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(25) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Uppsala
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(27) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Västerbotten
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(31) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+
+#Västernorrland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(33) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#västra götaland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(37) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#örebro
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(39) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Östergötland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(41) %>% 
+  html_table(fill = TRUE)
+majorities_2018 <- rbind(majorities_2018, df)
+
+majorities_2018 <- majorities_2018 %>% select(municipality = X1,
+                                              rule = X8,
+                                              num_mandates = X9) %>%
+  filter(municipality != "Kommun")
+
+#Västmanland
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(35) %>% 
+  html_table(fill = TRUE)
+df <- df[,-2] 
+df <- df %>% select(municipality = X1,
+                    rule = X9,
+                    num_mandates = X10) %>%
+  filter(municipality != "Kommun")
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Kalmar
+df <- read_html(url) %>% 
+  html_nodes('table') %>% 
+  `[[`(15) %>% 
+  html_table(fill = TRUE)
+df <- df[,-10]
+df <- df %>% select(municipality = X1,
+                    rule = X8,
+                    num_mandates = X9) %>%
+  filter(municipality != "Kommun")
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Troublesome
+#skåne
+df <- tribble(
+  ~municipality,  ~rule,                   ~num_mandates,
+  "Bjuv",	        "S+C+KD+L(2018–2019)",	"14 av 31 (minoritet)",
+  "Bjuv",	        "SD+M(2020–)",  	"16 av 31",
+  "Bromölla",	"SD+M+KD",      	"19 av 41 (minoritet)",
+  "Burlöv",	"M+L+C",	        "13 av 41 (minoritet)",
+  "Båstad",	"M+S+L+KD",     	"21 av 41",
+  "Eslöv",	"S+M+L",        	"26 av 51",
+  "Helsingborg",	"M+L+C+KD",        	"27 av 65 (minoritet)",
+  "Hässleholm",	"M+KD+L",        	"17 av 61 (minoritet)",
+  "Höganäs",	"M+C+KD",        	"22 av 41",
+  "Hörby",	"SD",           	"14 av 41 (minoritet)",
+  "Höör", 	"M+L+C+KD",        	"19 av 41 (minoritet)",
+  "Klippan",	"S+M+C",        	"20 av 41 (minoritet)",
+  "Kristianstad",	"M+L+C+KD",        	"29 av 65 (minoritet)",
+  "Kävlinge",	"M+L+C+KD",        	"24 av 49 (minoritet)",
+  "Landskrona",	"L+M+MP",        	"24 av 51 (minoritet)",
+  "Lomma",	"M+L+C+KD",        	"26 av 45",
+  "Lund", 	"M+L+FNL+C+KD",         "32 av 65 (minoritet)",
+  "Malmö",	"S+L",          	"24 av 61 (minoritet)",
+  "Osby", 	"C+M+KD+L",        	"16 av 41 (minoritet)",
+  "Perstorp",	"PF+M+C+KD+MP",	        "19 av 35",
+  "Simrishamn",	"M+C+L+KD",        	"21 av 49 (minoritet)",
+  "Sjöbo",	"M+C+L+MP",        	"20 av 49 (minoritet)",
+  "Skurup",	"M+C+SkuP",        	"14 av 41 (minoritet)",
+  "Staffanstorp",	"M+SD",	                "23 av 41",
+  "Svalöv",	"C+M+L+KD(2018–2019)",	"13 av 35 (minoritet)",
+  "Svalöv",	"SD+M+KD(2019–)",	"16 av 35 (minoritet)",
+  "Svedala",	"M+C+BAP+L+KD",	        "18 av 45 (minoritet)",
+  "Tomelilla",	"M+C+MP+L+KD",	        "19 av 41 (minoritet)",
+  "Trelleborg",	"M+KD",	                "15 av 51 (minoritet)",
+  "Vellinge",	"M",    	        "26 av 51",
+  "Ystad",	"M+L+KD",	        "16 av 49 (minoritet)",
+  "Åstorp",	"S+C",          	"12 av 31 (minoritet)",
+  "Ängelholm",	"M+C+L+KD+MP",        	"26 av 51",
+  "Örkelljunga",	"M+KD+C",        	"16 av 37 (minoritet)",
+  "Östra Göinge",	"M+C+KD",        	"17 av 31"
+)
+majorities_2018 <- rbind(majorities_2018, df)
+
+#Värmland
+df <- tribble(
+  ~municipality,  ~rule,          ~num_mandates,
+  "Arvika",	"S+V+MP",	"25 av 49",
+  "Eda",  	"C+HEL+V+KD",	"16 av 35 (minoritet)",
+  "Filipstad",	"S+V",	        "19 av 37",
+  "Forshaga",	"S+C",  	"22 av 41",
+  "Grums",	"S",    	"17 av 31",
+  "Hagfors",	"OR",   	"13 av 35 (minoritet)",
+  "Hammarö",	"M+L+KD+C+MP",	"15 av 31 (minoritet)",
+  "Karlstad",	"M+C+MP+L+KD",	"28 av 61 (minoritet)",
+  "Kil",  	"S+C",  	"22 av 41",
+  "Kristinehamn",	"M+C+L+KD+MP",	"21 av 41",
+  "Munkfors",	"S",    	"14 av 21",
+  "Storfors",	"S+V",  	"15 av 27",
+  "Sunne",	"C+S",  	"21 av 41",
+  "Säffle",	"C+M+SIV+KD+L",	"24 av 41",
+  "Torsby",	"S+C+L",	"18 av 31",
+  "Årjäng",	"S+C+MP",	"19 av 35"
+)
+majorities_2018 <- rbind(majorities_2018, df)
+majorities_2018 <- majorities_2018 %>% filter(municipality != "Region") %>%
+  mutate(municipality = if_else(municipality == "Upplands Bro", "Upplands-Bro",municipality)) %>%
+  mutate(municipality = if_else(municipality == "Region Gotland", "Gotland",municipality))
+
+ID %>% filter(municipality %notin%  majorities_2018$municipality)
+majorities_2018 %>% filter(municipality %notin%  ID$municipality)
+
+majorities_2018 <- as_tibble(majorities_2018) %>% 
+  filter(municipality %in% chairman_filter$Kommun) %>%
+  mutate(majority = str_detect(num_mandates,"minoritet")) %>%
+  mutate(majority = if_else(majority == TRUE, "minority", "majority"), 
+         # This contains two falköping 2018. Both are majorities, but different ones. 
+         year = "2018")
+# this file was then downloaded, and manually reshaped into the same format as majorities_filtered down below, but missing the muni_ID variable 
+
+majorities_2018 <- read_excel("Majorities_2018.xlsx") %>% rename(muni = municipality) %>% mutate_if(is.numeric, as.character)
 ```
 
-## Majorities
+## Majorities other years
 ```{r}
 majorities <- read_excel("Majorities.xlsx", skip = 1, na = c("", "..")) %>%
   rename(muni_id = `...1`,
@@ -695,9 +909,41 @@ majorities_filtered <- majorities %>%
     "1962",	"Norberg",	"2010",	"2",	"0",	"0",	"0",	"1",	"0",	"1",	"0",	"0",	"0",
     "2080",	"Falun",	"2010",	"3",	"0",	"0",	"0",	"1",	"0",	"1",	"0",	"1",	"0",
     "2309",	"Krokom",	"2010",	"5",	"1",	"1",	"1",	"1",	"1",	"0",	"0",	"0",	"0"
-  ))
+  )) %>% arrange(muni,year)
+
+
+majorities_other <- read_excel("Minorities.xlsx") %>% 
+  select(muni = Kommun,
+         year = År,
+         majority) %>% 
+  mutate(year = as.character(year)) 
+
+majorities_filtered <- majorities_filtered %>% 
+  select(-muni_id) %>% 
+  left_join(majorities_other)%>%
+  mutate( majority = ifelse(is.na(majority), "majority", "minority"))
+
+majorities_filtered <- majorities_filtered %>%
+  full_join(majorities_2018)
 ```
 
+#merging
+```{r}
+chairman_processed <- chairman_processed %>% rename(muni = Kommun) %>%
+  mutate(year = as.character(year)) %>%
+  left_join(majorities_filtered) %>% 
+  fill(nRule:majority)
+
+chairman_processed %>%
+  mutate(year = as.numeric(year),
+         Beslut = as.numeric(Beslut)) %>%
+  ggplot(aes(year, Beslut, color = majority))+
+  geom_point() + 
+  geom_smooth(method = "lm", colour = "black") + 
+  facet_wrap(~majority) + 
+  theme(legend.position = "none")
+
+```
 
 
 
@@ -743,5 +989,26 @@ chairman_processed %>%
   labs(title = "Bivariate relationship between time and the number of decisions made by the Chairman of the board",
        subtitle = "Outliers removed, values for municipalities with less than 20 % missing data have been imputated using the within group yearly mean",
        y = "Number of descicions")
+```
+
+```{r, Gothenburg Graphs}
+chairman_des %>% 
+  filter(Kommun == "Göteborg") %>%
+  group_by(Kommun, year) %>%
+  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
+  summarise(beslut = sum(Beslut)) %>%
+  ggplot(aes(year, beslut))+
+  geom_point()
+
+chairman_des %>% 
+  filter(Kommun == "Göteborg") %>%
+  filter(Nämnd != "Västra hisingen - Individ") %>%
+  group_by(Kommun, year) %>%
+  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
+  summarise(decisions = sum(Beslut)) %>%
+  ggplot(aes(year, decisions))+
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  ggtitle("Number of decisions made by chairman between meetings", "2002-2019, Gothenburg Municipality")
 ```
 
