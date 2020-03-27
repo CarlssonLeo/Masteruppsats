@@ -1,0 +1,152 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+sweden %>% filter(year == 2002) %>% 
+        mutate(majority_dummy = case_when((
+                C_part_of_rule*C_seats_won+
+                        L_part_of_rule*L_seats_won+
+                        KD_part_of_rule*KD_seats_won+
+                        MP_part_of_rule*MP_seats_won+
+                        M_part_of_rule*M_seats_won+
+                        S_part_of_rule*S_seats_won+
+                        SD_part_of_rule*SD_seats_won+
+                        V_part_of_rule*V_seats_won
+        )>= 0.5*total_mandates ~ TRUE)) %>%
+        select(muni,year, majority, majority_dummy)
+```
+
+
+```{r warning=FALSE}
+majorities_new <- read_excel("Data/Styren Kommuner, Landsting, Regioner 1994-2018.xlsx", skip = 1) %>%
+        select(year = Valår,
+               muni_ID = Kod,
+               M_part_of_rule = M,
+               C_part_of_rule = C,
+               L_part_of_rule = `L/FP`,
+               KD_part_of_rule = KD,
+               S_part_of_rule = S,
+               V_part_of_rule = V,
+               MP_part_of_rule = MP,
+               SD_part_of_rule = SD,
+               other_part_of_rule = ÖP
+        ) %>% 
+        filter(year >= 2002 & year < 2018) %>% 
+        mutate(SD_part_of_rule = as.character(SD_part_of_rule)) %>%
+        full_join(read_excel("Data/Styre-kommun-updat-2020-02-01.xlsx") %>%
+                          mutate(year = 2018) %>%
+                          select(year,
+                                 muni_ID = Kod,
+                                 M_part_of_rule = `2018...3`,
+                                 C_part_of_rule = `2018...4`,
+                                 L_part_of_rule = `2018...5`,
+                                 KD_part_of_rule = `2018...6`,
+                                 S_part_of_rule = `2018...7`,
+                                 V_part_of_rule = `2018...8`,
+                                 MP_part_of_rule = `2018...9`,
+                                 SD_part_of_rule = `2018...10`,
+                                 other_part_of_rule = `2018...11`,
+                                 majority = `Majoritet/minoritet`) %>%
+                          mutate(muni_ID = as.numeric(muni_ID))) 
+majorities_new$muni_ID <- str_pad(majorities_new$muni_ID, 4, side = "left", 0)
+
+majorities_new <- majorities_new %>%
+        left_join(ID) %>% 
+        select(year, muni = municipality, majority, everything(), -ID, -province_ID) %>% 
+        mutate(year = as.character(year),
+                M_part_of_rule = ifelse(is.na(M_part_of_rule), 0, 1),
+                C_part_of_rule = ifelse(is.na(C_part_of_rule), 0, 1),
+                L_part_of_rule = ifelse(is.na(L_part_of_rule), 0, 1),
+                KD_part_of_rule = ifelse(is.na(KD_part_of_rule), 0, 1),
+                S_part_of_rule = ifelse(is.na(S_part_of_rule), 0, 1),
+                V_part_of_rule = ifelse(is.na(V_part_of_rule), 0, 1),
+                MP_part_of_rule = ifelse(is.na(MP_part_of_rule), 0, 1),
+                SD_part_of_rule = ifelse(is.na(SD_part_of_rule), 0, 1),
+                other_part_of_rule = ifelse(is.na(other_part_of_rule), 0, 1),
+        ) %>%
+        left_join(sweden) %>% 
+        mutate(majority_dummy = case_when((
+                C_part_of_rule*C_seats_won+
+                        L_part_of_rule*L_seats_won+
+                        KD_part_of_rule*KD_seats_won+
+                        MP_part_of_rule*MP_seats_won+
+                        M_part_of_rule*M_seats_won+
+                        S_part_of_rule*S_seats_won+
+                        SD_part_of_rule*SD_seats_won+
+                        V_part_of_rule*V_seats_won
+        )>= 0.5*total_mandates ~ TRUE)) %>%
+        mutate(majority_dummy = ifelse(!is.na(majority_dummy), "Majority", majority_dummy)) %>%
+        mutate(majority_dummy = if_else(other_part_of_rule == 0 & is.na(majority_dummy), "Minority", majority_dummy)) %>%
+        mutate(majority = ifelse(is.na(majority), majority_dummy, majority)) %>%
+        mutate(year = as.numeric(year)) %>%
+        left_join(read_excel("Data/Manual_majorities.xlsx") %>% select(year, muni, manual_majority = majority)) %>%
+        mutate(majority = ifelse(is.na(majority), manual_majority, majority)) %>%
+        select(-majority_dummy, -manual_majority)
+
+
+
+lookup <- majorities_new %>% 
+        filter(is.na(majority)) %>%
+        filter(muni %in% chair_sum$Kommun) %>%
+        mutate(majority_dummy = case_when((
+                C_part_of_rule*C_seats_won+
+                        L_part_of_rule*L_seats_won+
+                        KD_part_of_rule*KD_seats_won+
+                        MP_part_of_rule*MP_seats_won+
+                        M_part_of_rule*M_seats_won+
+                        S_part_of_rule*S_seats_won+
+                        SD_part_of_rule*SD_seats_won+
+                        V_part_of_rule*V_seats_won+
+                other_part_of_rule*other_seats_won
+        )>= 0.5*total_mandates ~ TRUE)) %>%
+        mutate(majority_dummy = ifelse(!is.na(majority_dummy), "Majority", majority_dummy)) %>%
+        mutate(majority_dummy = if_else(other_part_of_rule == 0 & is.na(majority_dummy), "Minority", majority_dummy))
+
+
+
+```
+
+# Merging
+```{r}
+#Chairman data with majority data
+chair_sum <- chair_sum %>% rename(muni = Kommun) %>%
+        mutate(year = as.character(year)) %>%
+        left_join(majorities) %>% 
+        left_join(majorities_2018) %>%
+        fill(nRule:majority)
+
+
+#Adding election data
+chairman_processed <- chairman_processed %>% left_join(sweden) %>%
+        select(-blank, -invalid) %>% 
+        fill(M_vote_share:total_mandates) 
+
+chairman_processed <-  chairman_processed %>% 
+        mutate_at(vars(-muni,-majority, -year), funs(as.numeric(.)))
+
+
+# Adding population
+pop <- read_excel("Data/scrape_sweden/pop_sweden_1950-2019.xlsx", 
+                  skip = 5) %>% slice(1:290) %>% select(muni = Kommun,
+                                                        `2002`,`2003`,`2004`,`2005`,
+                                                        `2006`,`2007`,`2008`,`2009`,
+                                                        `2010`,`2011`,`2012`,`2013`,
+                                                        `2014`,`2015`,`2016`,`2017`,
+                                                        `2018`,`2019`)  %>%
+        pivot_longer(2:19, names_to = "year", values_to = "pop")
+chairman_processed <- chairman_processed %>% left_join(pop)
+
+#adding provinces
+ID <- read_excel("Data/scrape_sweden/kommunlankod27.xls", 
+                 skip = 5) %>% select(muni = Name,
+                                      province = ...3) %>%
+        filter(!str_detect(muni," län")) 
+chairman_processed <- chairman_processed %>% left_join(ID) %>% 
+        mutate(year = as.integer(year))
+
+
+```
+
