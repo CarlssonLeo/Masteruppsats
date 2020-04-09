@@ -18,8 +18,18 @@ library(plm)
 library(broom)
 library(GGally)
 library(fastDummies)
+library(stargazer)
+library(lmtest)
+library(multiwayvcov)
+library(knitr)
+library(kableExtra)
+library(cowplot)
 `%notin%` <- Negate(`%in%`)
 Sys.setlocale(locale = "sv_SE.UTF-8")
+
+sequential_years = function(x) {
+  accumulate(x, function(total, nxt) ifelse(nxt==0, 0, total+1))
+}
 ```
 # Elections
 ## Scraping election data
@@ -337,7 +347,7 @@ votes <- elections_sweden %>% group_by(municipality) %>%
   mutate(total_voters = sum(votes)) %>%
   filter(party != "OGILTIGA") %>%
   mutate(valid_votes = sum(votes)) %>%
-  mutate(turnout = total_voters/eligible_voters) %>%
+  mutate(turnout = (total_voters/eligible_voters)*100) %>%
   filter(party == "M") %>%
   filter(municipality != "Bara") %>%
   select(muni_ID, municipality, eligible_voters:turnout) %>%
@@ -409,7 +419,7 @@ chairman_des <- read_excel("Data/Ordförandebeslut.xlsx") %>% filter(!is.na(Komm
   rename(year = År) %>%
   mutate(Beslut = as.integer(Beslut))
 
-chair_sum <- chairman_des %>% group_by(Kommun, year) %>%  summarise(nDes = sum(Beslut))
+chair_sum <- chairman_des %>% group_by(Kommun, year) %>%  summarise(nDes = sum(Beslut, na.rm = TRUE))
 chair_NA <- chairman_des %>% filter(is.na(Beslut))
 qplot(chair_NA$year, geom = "histogram",
       binwidth = 1,
@@ -983,10 +993,9 @@ majorities <- read_excel("Data/Styren Kommuner, Landsting, Regioner 1994-2018.xl
                                  SD_part_of_rule = `2018...10`,
                                  other_part_of_rule = `2018...11`,
                                  majority = `Majoritet/minoritet`) %>%
-                          mutate(muni_ID = as.numeric(muni_ID))) 
-majorities$muni_ID <- str_pad(majorities$muni_ID, 4, side = "left", 0)
-
-majorities <- majorities %>%
+                          mutate(muni_ID = as.numeric(muni_ID))) %>%
+  ungroup() %>%
+  mutate(muni_ID = str_pad(muni_ID, width =  4, side = "left", pad = 0))%>%
         left_join(ID) %>% 
         select(year, muni = municipality, majority, everything(), -ID, -province_ID) %>% 
         mutate(year = as.character(year),
@@ -1019,8 +1028,28 @@ majorities <- majorities %>%
         mutate(majority = ifelse(is.na(majority), manual_majority, majority)) %>%
         select(-majority_dummy, -manual_majority) %>%
   mutate(majority = ifelse(majority == "Majoritet", "Majority", majority),
-         majority = ifelse(majority == "Minoritet", "Minority", majority))
-  
+         majority = ifelse(majority == "Minoritet", "Minority", majority)) %>%
+  mutate(V_length = sequential_years(V_part_of_rule),
+    S_length = sequential_years(S_part_of_rule),
+    MP_length = sequential_years(MP_part_of_rule),
+    C_length = sequential_years(C_part_of_rule),
+    L_length = sequential_years(L_part_of_rule),
+    M_length = sequential_years(M_part_of_rule),
+    KD_length = sequential_years(KD_part_of_rule),
+    SD_length = sequential_years(SD_part_of_rule),
+    other_length = sequential_years(other_part_of_rule)) %>%
+  left_join(read_excel("Data/Styren Kommuner, Landsting, Regioner 1994-2018.xlsx", skip = 1) %>%
+  select(year = Valår,
+        muni_ID = Kod,
+        nOther = `Övrigt parti, ange vilket eller vilka`) %>%
+  filter(year >= 2002 & year < 2018) %>%
+  separate_rows(nOther, sep = ", ") %>%
+  na_if("") %>%
+  group_by(muni_ID, year) %>%
+  summarise(nOther = sum(!is.na(nOther))) %>% 
+  ungroup() %>%
+  mutate(muni_ID = str_pad(muni_ID, width =  4, side = "left", pad = 0))) %>%
+  mutate(nRule = nOther+M_part_of_rule+C_part_of_rule+L_part_of_rule+KD_part_of_rule+S_part_of_rule+V_part_of_rule +MP_part_of_rule +SD_part_of_rule)
 ```
 
 # Merging
@@ -1029,7 +1058,7 @@ majorities <- majorities %>%
 chair_sum <- chair_sum %>% 
   rename(muni = Kommun) %>% 
   left_join(majorities) %>%
-  fill(majority:total_mandates)
+  fill(majority:nRule)
 
 # Adding population
 pop <- read_excel("Data/scrape_sweden/pop_sweden_1950-2019.xlsx", 
@@ -1040,12 +1069,54 @@ pop <- read_excel("Data/scrape_sweden/pop_sweden_1950-2019.xlsx",
                                                         `2014`,`2015`,`2016`,`2017`,
                                                         `2018`,`2019`)  %>%
   pivot_longer(2:19, names_to = "year", values_to = "pop")
-chair_sum <- chair_sum %>% mutate(year = as.character(year)) %>% left_join(pop)
+
+chair_sum <- chair_sum %>% 
+  mutate(year = as.character(year)) %>% 
+  left_join(pop) %>%
+  left_join(read_csv("http://www.statistikdatabasen.scb.se/sq/85687", 
+                   locale = locale(encoding = "latin1"), 
+                   col_names = TRUE ) %>%
+  separate(region, into = c("muni_ID", "muni"), sep = " ", extra = "merge") %>%
+  select(muni, 23:39) %>%
+  rename(`2002` = `Medianinkomst, tkr 2002`,
+         `2003` = `Medianinkomst, tkr 2003`,
+         `2004` = `Medianinkomst, tkr 2004`,
+         `2005` = `Medianinkomst, tkr 2005`,
+         `2006` = `Medianinkomst, tkr 2006`,
+         `2007` = `Medianinkomst, tkr 2007`,
+         `2008` = `Medianinkomst, tkr 2008`,
+         `2009` = `Medianinkomst, tkr 2009`,
+         `2010` = `Medianinkomst, tkr 2010`,
+         `2011` = `Medianinkomst, tkr 2011`,
+         `2012` = `Medianinkomst, tkr 2012`,
+         `2013` = `Medianinkomst, tkr 2013`,
+         `2014` = `Medianinkomst, tkr 2014`,
+         `2015` = `Medianinkomst, tkr 2015`,
+         `2016` = `Medianinkomst, tkr 2016`,
+         `2017` = `Medianinkomst, tkr 2017`,
+         `2018` = `Medianinkomst, tkr 2018`) %>%
+  mutate(`2019` =`2018`) %>%
+  pivot_longer(`2002`:`2019`, names_to = "year", values_to = "median_income"))
+
+  
 ```
 
 # Modelling
 ## EDA
 ```{r Introduction, echo=FALSE}
+#in paper
+majorities %>% count(majority, year) %>% 
+  ggplot(aes(factor(year), n, fill = majority))+
+  geom_col()+
+  labs(x = "Year",
+       y = "Count",
+       title = "Number of majorities and minorities after each election year",
+       subtitle = "NA = data unavailable for that municipality")
+
+majorities_table <- majorities %>% count(majority, year) %>% pivot_wider(names_from = majority, values_from = n)
+stargazer(as.data.frame(majorities_table), summary = F, type = "html", out = "./majorities_table.html")
+
+#in paper
 sweden_plot %>% group_by(date) %>% 
   filter(party == "SD" & seats_won > 0) %>% 
   summarise(SD = n()) %>%
@@ -1057,6 +1128,7 @@ sweden_plot %>% group_by(date) %>%
 majorities %>% select(muni, year, majority) %>% 
   group_by(year) %>% count(majority)
 
+#in paper
 riksdagspartier <- c("V", "S", "MP", "C", "L", "M", "KD", "SD")
 sweden_plot %>% group_by(date) %>% 
   filter(party %in% riksdagspartier & seats_won > 0) %>% 
@@ -1078,16 +1150,28 @@ sweden_plot %>% group_by(date, party) %>%
   labs(title = "Total municipal seats won",
        x = "Election date",
        y = "Total numer of seats won")
+
+response <- ID %>% count(province, name = "Sweden") %>% 
+  left_join(primary %>% 
+              select(muni, province) %>% 
+              distinct() %>% 
+              count(province, name = "sample")) %>%
+  mutate(share = sample/Sweden)
+stargazer(as.data.frame(response), summary = FALSE, type = "html", out = "./response.html")
+
+
 ```
 
-```{r Exploratory Graphs}
+```{r Exploratory Graphs in paper}
 chair_sum %>%
-  ggplot(aes(as.numeric(year), as.numeric(nDes))) +
-  geom_point() + 
-  geom_smooth(method = "lm") + 
-  labs(title = "Bivariate relationship between time and the number of decisions made by the Chairman of the board",
-       subtitle = "Outliers removed, values for municipalities with less than 20 % missing data have been imputated using the within group yearly mean",
-       y = "Number of descicions")
+  ungroup () %>%
+  count(majority, year) %>%
+  ggplot(aes(year, n, fill = majority)) +
+  geom_bar(stat= "identity")+
+  labs(title = "Number of majorities and minorities within sample",
+       y = "Count",
+       x = "Year")
+  
 
 chair_sum %>%
   mutate(year = as.numeric(year),
@@ -1099,121 +1183,149 @@ chair_sum %>%
   theme(legend.position = "none") + 
   labs(y = "# of decisions taken by the board chairman",
        title = "Bivariate relationship between time and # of chairman decicions",
-       subtitle = "Split into two sets, one where the ruling coalition holds a majority of seats,\none where they only have a minority")
+       subtitle = "Split into two sets, one where the ruling coalition holds a majority of seats, one where they only have a minority")
 ```
 
 
-```{r, Gothenburg Graphs}
-chairman_des %>% 
-  filter(Kommun == "Göteborg") %>%
-  group_by(Kommun, year) %>%
-  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
-  summarise(beslut = sum(Beslut)) %>%
-  ggplot(aes(year, beslut))+
-  geom_point()
 
-chairman_des %>% 
-  filter(Kommun == "Göteborg") %>%
-  filter(Nämnd != "Västra hisingen - Individ") %>%
-  group_by(Kommun, year) %>%
-  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
-  summarise(decisions = sum(Beslut)) %>%
-  ggplot(aes(year, decisions))+
-  geom_point() +
-  geom_smooth(method = "lm") + 
-  ggtitle("Number of decisions made by chairman between meetings", "2002-2019, Gothenburg Municipality")
+```{r, Summary Statistics}
+primary <- chair_sum %>%
+  mutate(nDes = log(nDes+1),
+         year = as.integer(year),
+         M_vote_share = as.numeric(M_vote_share),
+         C_vote_share = as.numeric(C_vote_share),
+         L_vote_share = as.numeric(L_vote_share),
+         KD_vote_share = as.numeric(KD_vote_share),
+         S_vote_share = as.numeric(S_vote_share),
+         V_vote_share = as.numeric(V_vote_share),
+         MP_vote_share = as.numeric(MP_vote_share),
+         SD_vote_share = as.numeric(SD_vote_share),
+         other_vote_share = as.numeric(other_vote_share),
+         invalid = as.numeric(invalid),
+         majority = as.factor(majority)) %>% ungroup() %>% select(-blank, -invalid)
+stargazer(as.data.frame(primary), type = "html", out = "./summary.html")
 
-
-chairman_processed %>% 
-  ggplot(aes(S_vote_share))+
-  geom_histogram() + 
-  labs(title = "S fördelning av valresultat i kommuner, 2002-2002",
-       x = "valresultat i procent",
-       y="")
+des1 <- chair_sum %>% ggplot(aes(nDes)) + 
+  geom_histogram()+
+  labs(x = "Chairman decisions",
+       y = "")
+des2 <- primary %>% ggplot(aes(nDes)) + 
+  geom_histogram()+
+  labs(x = "log Chairman decisions",
+       y = "")
+des3 <- chair_sum %>% ggplot(aes(sqrt(nDes)))+ 
+  geom_histogram()+
+  labs(x = "square root Chairman decisions",
+       y = "")
+des4 <- chair_sum %>% ggplot(aes(nDes^(1/3)))+ 
+  geom_histogram()+
+  labs(x = "cube root Chairman decisions",
+       y = "")
+#in paper
+plot_grid(des1, des2, des3, des4,
+          labels = c("A", "B", "C", "D"))
 ```
+
 
 ## Panel modelling
 ```{r}
-library(lmtest)
-library(multiwayvcov)
-chair_sum <- chair_sum %>%
-  mutate(year = as.integer(year)) %>% ungroup()
-
-m1 <- plm(
+#Model 1, basic regression
+m1_individual <- plm(
   nDes ~ majority,
-  data = chair_sum,
+  data = primary,
   model = "within",
+  effect = "individual",
   index = c("muni", "year")
 )
-summary(m1)
-
-coeftest(m1, vcov=vcovHC(m1, type="sss", cluster="group")) 
-
-m1_random <- plm(
+m1_time <- plm(
   nDes ~ majority,
-  data = chair_sum,
-  model = "random",
-  index = c("muni", "year"))
-summary(m1_random)
-
-
-m2 <- plm(
-  nDes ~ nRule + majority+ turnout + total_mandates + pop + province + M_seats_won + C_seats_won + L_seats_won + KD_seats_won + S_seats_won + V_seats_won + MP_seats_won + SD_seats_won + other_seats_won,
-  data = chair_sum,
+  data = primary,
   model = "within",
+  effect = "time",
+  index = c("muni", "year")
+)
+
+#Model 2, added geograpical features
+m2_pooled <- plm(
+  nDes ~ majority + pop + median_income + province,
+  data = primary,
+  model = "pooling",
   index = c("muni", "year"))
 
-m2_random <- plm(
-  nDes ~ nRule + majority+ turnout + total_mandates + pop + province + M_seats_won + C_seats_won + L_seats_won + KD_seats_won + S_seats_won + V_seats_won + MP_seats_won + SD_seats_won + other_seats_won,
-  data = chair_sum,
-  model = "random",
-  index = c("muni", "year"))
-
-m3 <- plm(
-  nDes ~ nRule+ turnout + majority + total_mandates + pop + province  + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + nOther,
-  data = chair_sum,
+m2_individual <- plm(
+  nDes ~ majority + pop + median_income + province,
+  data = primary,
   model = "within",
+  effect = "individual",
   index = c("muni", "year"))
 
-m3_random <- plm(
-  nDes ~ nRule+ turnout + majority + total_mandates + pop + province  + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + nOther,
-  data = chair_sum,
-  model = "random",
-  index = c("muni", "year"))
-
-m4 <- plm(
-  nDes ~ nRule+ turnout + majority + total_mandates + pop + province +  M_vote_share + C_vote_share + L_vote_share + KD_vote_share + S_vote_share + V_vote_share + MP_vote_share + other_vote_share + SD_vote_share,
-  data = chair_sum,
+m2_time <- plm(
+  nDes ~ majority + pop + median_income + province,
+  data = primary,
   model = "within",
-  index = c("muni", "year"))
-
-m4_random <- plm(
-  nDes ~ nRule+ turnout + majority + total_mandates + pop + province +  M_vote_share + C_vote_share + L_vote_share + KD_vote_share + S_vote_share + V_vote_share + MP_vote_share + other_vote_share + SD_vote_share,
-  data = chair_sum,
-  model = "random",
+  effect = "time",
   index = c("muni", "year"))
 
 
-m5 <- plm(
-  nDes ~ nRule + turnout + majority + total_mandates + pop + province + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
-  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + nOther + 
-  M_vote_share + C_vote_share + L_vote_share + KD_vote_share + S_vote_share + V_vote_share + MP_vote_share + 
-  other_vote_share + SD_vote_share + M_seats_won + C_seats_won + L_seats_won + KD_seats_won + 
-  S_seats_won + V_seats_won + MP_seats_won + SD_seats_won + other_seats_won,
-  data = chair_sum,
+#Model 3, added political parties in rule
+m3_individual <- plm(
+  nDes ~ majority + pop + median_income + province + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
+  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length,
+  data = primary,
   model = "within",
+  effect = "individual",
   index = c("muni", "year"))
 
+m3_time <- plm(
+  nDes ~ majority + pop + median_income + province + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
+  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length,
+  data = primary,
+  model = "within",
+  effect = "time",
+  index = c("muni", "year"))
 
-library(stargazer)
-stargazer(m1,m2,m3,m4,m5, type = "html", out = "./m1.html")
+m1_se <- list(sqrt(diag(vcovHC(m1_individual, type = "HC3", method = "arellano"))),
+              sqrt(diag(vcovHC(m1_time, type = "HC3", method = "arellano"))),
+              sqrt(diag(vcovHC(m2_individual, type = "HC3",  method = "arellano"))),
+              sqrt(diag(vcovHC(m2_time, type = "HC3",  method = "arellano"))),
+              sqrt(diag(vcovHC(m3_individual, type = "HC3",  method = "arellano"))),
+              sqrt(diag(vcovHC(m3_time, type = "HC3",  method = "arellano")))
+              )
+
+stargazer(m1_individual, m1_time, m2_individual, m2_time, m3_individual, m3_time,
+          se = m1_se,
+          notes = "Robust Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/robust.html")
+
+stargazer(m1_individual, m1_time, m2_individual, m2_time, m3_individual, m3_time, 
+          notes = "Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/standard.html")
 ```
 
 ### Testing the models
 ```{r}
+#F test for time effects
+pFtest(m2_time, m2_pooled)
+
+#Lagrange Multiplier Test - time effects (Breusch-Pagan) for balanced panels
+plmtest(m2_individual, "time", type = "bp")
+
+#Breusch-Pagan LM test for cross-sectional dependence in panels
+pcdtest(m2_individual, test = "lm")
+
+#Pesaran CD test for cross-sectional dependence in panels
+pcdtest(m2_individual, test = "cd")
+
+#Breusch-Godfrey/Wooldridge test for serial correlation in panel models
+pbgtest(m2_individual)
+pbgtest(m2_time)
+
+
+#Hausman Tests
 phtest(m1, m1_random)
 phtest(m2, m2_random)
 phtest(m3, m3_random)
 phtest(m4, m4_random)
 ```
-

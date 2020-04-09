@@ -18,7 +18,34 @@ sweden %>% filter(year == 2002) %>%
         )>= 0.5*total_mandates ~ TRUE)) %>%
         select(muni,year, majority, majority_dummy)
 ```
+```{r, Gothenburg Graphs}
+chairman_des %>% 
+  filter(Kommun == "Göteborg") %>%
+  group_by(Kommun, year) %>%
+  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
+  summarise(beslut = sum(Beslut)) %>%
+  ggplot(aes(year, beslut))+
+  geom_point()
 
+chairman_des %>% 
+  filter(Kommun == "Göteborg") %>%
+  filter(Nämnd != "Västra hisingen - Individ") %>%
+  group_by(Kommun, year) %>%
+  mutate(Beslut = ifelse(is.na(Beslut), round(mean(Beslut, na.rm = T)), Beslut)) %>%
+  summarise(decisions = sum(Beslut)) %>%
+  ggplot(aes(year, decisions))+
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  ggtitle("Number of decisions made by chairman between meetings", "2002-2019, Gothenburg Municipality")
+
+
+chairman_processed %>% 
+  ggplot(aes(S_vote_share))+
+  geom_histogram() + 
+  labs(title = "S fördelning av valresultat i kommuner, 2002-2002",
+       x = "valresultat i procent",
+       y="")
+```
 
 ```{r warning=FALSE}
 majorities_new <- read_excel("Data/Styren Kommuner, Landsting, Regioner 1994-2018.xlsx", skip = 1) %>%
@@ -149,4 +176,67 @@ chairman_processed <- chairman_processed %>% left_join(ID) %>%
 
 
 ```
+
+```{r}
+summary(primary)
+```
+```{r}
+t1 <- plm(
+  nDes ~ majority,
+  data = primary,
+  model = "within",
+  index = c("muni", "year")
+)
+
+t2 <- plm(
+  nDes ~ majority,
+  data = primary,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "year")
+)
+
+t33 <- plm(
+  nDes ~ majority+year,
+  data = primary,
+  model = "within",
+  effect = "time",
+  index = c("muni", "year")
+)
+
+t3 <- plm(
+  nDes ~ majority,
+  data = primary,
+  model = "within",
+  effect = "time",
+  index = c("muni", "year")
+)
+
+t4 <- plm(
+  nDes ~ majority,
+  data = primary,
+  model = "within",
+  effect = "twoways",
+  index = c("muni", "year")
+)
+
+stargazer(t33, t3, t4, type = "html", out = "./Regressions/test.html")
+```
+```{r}
+
+read_excel("Data/Styren Kommuner, Landsting, Regioner 1994-2018.xlsx", skip = 1) %>%
+  select(year = Valår,
+        muni_ID = Kod,
+        nOther = `Övrigt parti, ange vilket eller vilka`) %>%
+  filter(year >= 2002 & year < 2018) %>%
+  separate_rows(nOther, sep = ", ") %>%
+  na_if("") %>%
+  group_by(muni_ID, year) %>%
+  summarise(nOther = sum(!is.na(nOther))) %>% 
+  ungroup() %>%
+  mutate(muni_ID = str_pad(muni_ID, width =  4, side = "left", pad = 0))
+
+
+```
+
 
