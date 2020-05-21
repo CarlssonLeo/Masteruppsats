@@ -1098,7 +1098,6 @@ chair_sum <- chair_sum %>%
   mutate(`2019` =`2018`) %>%
   pivot_longer(`2002`:`2019`, names_to = "year", values_to = "median_income"))
 
-  
 ```
 
 # Modelling
@@ -1190,8 +1189,7 @@ chair_sum %>%
 
 ```{r, Summary Statistics}
 primary <- chair_sum %>%
-  mutate(nDes = log(nDes+1),
-         year = as.integer(year),
+  mutate(year = as.integer(year),
          M_vote_share = as.numeric(M_vote_share),
          C_vote_share = as.numeric(C_vote_share),
          L_vote_share = as.numeric(L_vote_share),
@@ -1202,9 +1200,11 @@ primary <- chair_sum %>%
          SD_vote_share = as.numeric(SD_vote_share),
          other_vote_share = as.numeric(other_vote_share),
          invalid = as.numeric(invalid),
-         majority = as.factor(majority)) %>% ungroup() %>% select(-blank, -invalid)
+         majority = as.factor(majority),
+         nRule = as.integer(nRule)) %>% ungroup() %>% select(-blank, -invalid)
 stargazer(as.data.frame(primary), type = "html", out = "./summary.html")
 
+#Chairman decisions, with and without log
 des1 <- chair_sum %>% ggplot(aes(nDes)) + 
   geom_histogram()+
   labs(x = "Chairman decisions",
@@ -1213,119 +1213,420 @@ des2 <- primary %>% ggplot(aes(nDes)) +
   geom_histogram()+
   labs(x = "log Chairman decisions",
        y = "")
-des3 <- chair_sum %>% ggplot(aes(sqrt(nDes)))+ 
-  geom_histogram()+
-  labs(x = "square root Chairman decisions",
+#in paper
+plot_grid(des1, des2,
+          labels = c("A", "B"))
+
+# density plot for all varibles
+primary %>% 
+  keep(is.numeric) %>%
+  gather() %>%
+  filter(!str_detect(key, "part_of_rule"),
+         !str_detect(key, "_length"),
+         key != "year") %>%
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_density()
+
+
+income1 <- primary %>% ggplot(aes(median_income)) + 
+  geom_density()+
+  labs(x = "Median Income",
        y = "")
-des4 <- chair_sum %>% ggplot(aes(nDes^(1/3)))+ 
-  geom_histogram()+
-  labs(x = "cube root Chairman decisions",
+income2 <- primary %>% ggplot(aes(log(median_income))) + 
+  geom_density()+
+  labs(x = "log Median Income",
+       y = "")
+pop1 <- primary %>% ggplot(aes(pop)) + 
+  geom_density()+
+  labs(x = "Population",
+       y = "")
+pop2 <- primary %>% ggplot(aes(log(pop))) + 
+  geom_density()+
+  labs(x = "log Population",
        y = "")
 #in paper
-plot_grid(des1, des2, des3, des4,
+plot_grid(income1, income2, pop1, pop2,
           labels = c("A", "B", "C", "D"))
+
 ```
 
 
 ## Panel modelling
-```{r}
-#Model 1, basic regression
-m1_individual <- plm(
-  nDes ~ majority,
-  data = primary,
+```{r Primary}
+#Data:
+avg_data <- primary %>% 
+  mutate(mandate_period = if_else(year >= 2002 & year < 2006, 1, 0),
+         mandate_period = if_else(year >= 2006 & year < 2010, 2, mandate_period),
+         mandate_period = if_else(year >= 2010 & year < 2014, 3, mandate_period),
+         mandate_period = if_else(year >= 2014 & year < 2018, 4, mandate_period),
+         mandate_period = if_else(year >= 2018, 5, mandate_period),
+         minority_dummy = if_else(majority == "Minority", 1, 0)
+         ) %>% 
+  group_by(muni, mandate_period) %>% 
+  mutate(des_avg = mean(nDes),
+         pop = mean(pop),
+         median_income = mean(median_income)) %>% 
+  ungroup() %>%
+  select(-nDes, -year) %>% 
+  unique()
+
+des1 <- avg_data %>% ggplot(aes(des_avg)) + 
+  geom_histogram()+
+  labs(x = "Average Chairman decisions",
+       y = "")
+des2 <- avg_data %>% ggplot(aes(log(des_avg))) + 
+  geom_histogram()+
+  labs(x = "log Average Chairman decisions",
+       y = "")
+#in paper
+plot_grid(des1, des2,
+          labels = c("A", "B"))
+
+diff_data <- avg_data %>% filter(mandate_period == 2 | mandate_period == 3)
+
+ols_data <- avg_data %>% filter(mandate_period == 5)
+
+#Models:
+bi_avg <- plm(
+  log(des_avg+1) ~ minority_dummy,
+  data = avg_data,
   model = "within",
   effect = "individual",
-  index = c("muni", "year")
-)
-m1_time <- plm(
-  nDes ~ majority,
-  data = primary,
-  model = "within",
-  effect = "time",
-  index = c("muni", "year")
-)
+  index = c("muni", "mandate_period"))
 
-#Model 2, added geograpical features
-m2_pooled <- plm(
-  nDes ~ majority + pop + median_income + province,
-  data = primary,
-  model = "pooling",
-  index = c("muni", "year"))
-
-m2_individual <- plm(
-  nDes ~ majority + pop + median_income + province,
-  data = primary,
+avg <- plm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = avg_data,
   model = "within",
   effect = "individual",
-  index = c("muni", "year"))
+  index = c("muni", "mandate_period"))
 
-m2_time <- plm(
-  nDes ~ majority + pop + median_income + province,
-  data = primary,
-  model = "within",
-  effect = "time",
-  index = c("muni", "year"))
-
-
-#Model 3, added political parties in rule
-m3_individual <- plm(
-  nDes ~ majority + pop + median_income + province + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
-  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length,
-  data = primary,
+diff <- plm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = diff_data,
   model = "within",
   effect = "individual",
-  index = c("muni", "year"))
+  index = c("muni", "mandate_period"))
 
-m3_time <- plm(
-  nDes ~ majority + pop + median_income + province + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
-  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length,
-  data = primary,
-  model = "within",
-  effect = "time",
-  index = c("muni", "year"))
 
-m1_se <- list(sqrt(diag(vcovHC(m1_individual, type = "HC3", method = "arellano"))),
-              sqrt(diag(vcovHC(m1_time, type = "HC3", method = "arellano"))),
-              sqrt(diag(vcovHC(m2_individual, type = "HC3",  method = "arellano"))),
-              sqrt(diag(vcovHC(m2_time, type = "HC3",  method = "arellano"))),
-              sqrt(diag(vcovHC(m3_individual, type = "HC3",  method = "arellano"))),
-              sqrt(diag(vcovHC(m3_time, type = "HC3",  method = "arellano")))
-              )
+ols <- lm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share,
+  data = ols_data)
 
-stargazer(m1_individual, m1_time, m2_individual, m2_time, m3_individual, m3_time,
-          se = m1_se,
-          notes = "Robust Standard Error in Parenthesis",
+gmm <- pgmm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share | lag(log(des_avg+1), 2:5),
+  effect = "individual",
+  model = "twosteps",
+  transformation = "ld",
+  data = avg_data,
+  index = c("muni", "mandate_period"))
+summary(gmm)
+
+gmm_diff <- pgmm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share | lag(log(des_avg+1), 2:5),
+  effect = "individual",
+  model = "onestep",
+  transformation = "d",
+  data = avg_data,
+  index = c("muni", "mandate_period"))
+
+se <- list(sqrt(diag(vcovHC(bi_avg, type = "HC3"))),
+              sqrt(diag(vcovHC(avg, type = "HC3"))),
+              sqrt(diag(vcovHC(diff, type = "HC3"))),
+              sqrt(diag(vcovHC(ols))),
+              sqrt(diag(vcovHC(gmm)))
+           )
+
+stargazer(bi_avg, avg, diff, ols, gmm,
+          se = se,
+          model.names = TRUE,
+          multicolumn = TRUE,
+          notes = "Municipality Clustered Standard Error in Parenthesis",
           type = "html",
-          out = "./Regressions/robust.html")
+          out = "./Regressions/Table.html")
 
-stargazer(m1_individual, m1_time, m2_individual, m2_time, m3_individual, m3_time, 
-          notes = "Standard Error in Parenthesis",
-          type = "html",
-          out = "./Regressions/standard.html")
+pwartest(bi_avg)
+pwartest(avg)
+pwartest(diff)
 ```
 
-### Testing the models
-```{r}
-#F test for time effects
-pFtest(m2_time, m2_pooled)
+## Robustness
+```{r Imputed}
+#Chairman data with majority data
+chairman_processed <- chairman_processed %>% 
+  rename(muni = Kommun) %>% 
+  left_join(majorities) %>%
+  fill(majority:nRule)
 
-#Lagrange Multiplier Test - time effects (Breusch-Pagan) for balanced panels
-plmtest(m2_individual, "time", type = "bp")
+chairman_processed <- chairman_processed %>% 
+  mutate(year = as.character(year)) %>% 
+  left_join(pop) %>%
+  left_join(read_csv("http://www.statistikdatabasen.scb.se/sq/85687", 
+                   locale = locale(encoding = "latin1"), 
+                   col_names = TRUE ) %>%
+  separate(region, into = c("muni_ID", "muni"), sep = " ", extra = "merge") %>%
+  select(muni, 23:39) %>%
+  rename(`2002` = `Medianinkomst, tkr 2002`,
+         `2003` = `Medianinkomst, tkr 2003`,
+         `2004` = `Medianinkomst, tkr 2004`,
+         `2005` = `Medianinkomst, tkr 2005`,
+         `2006` = `Medianinkomst, tkr 2006`,
+         `2007` = `Medianinkomst, tkr 2007`,
+         `2008` = `Medianinkomst, tkr 2008`,
+         `2009` = `Medianinkomst, tkr 2009`,
+         `2010` = `Medianinkomst, tkr 2010`,
+         `2011` = `Medianinkomst, tkr 2011`,
+         `2012` = `Medianinkomst, tkr 2012`,
+         `2013` = `Medianinkomst, tkr 2013`,
+         `2014` = `Medianinkomst, tkr 2014`,
+         `2015` = `Medianinkomst, tkr 2015`,
+         `2016` = `Medianinkomst, tkr 2016`,
+         `2017` = `Medianinkomst, tkr 2017`,
+         `2018` = `Medianinkomst, tkr 2018`) %>%
+  mutate(`2019` =`2018`) %>%
+  pivot_longer(`2002`:`2019`, names_to = "year", values_to = "median_income"))
 
-#Breusch-Pagan LM test for cross-sectional dependence in panels
-pcdtest(m2_individual, test = "lm")
+#Data
+avg_imputed <- chairman_processed %>% 
+  mutate(mandate_period = if_else(year >= 2002 & year < 2006, 1, 0),
+         mandate_period = if_else(year >= 2006 & year < 2010, 2, mandate_period),
+         mandate_period = if_else(year >= 2010 & year < 2014, 3, mandate_period),
+         mandate_period = if_else(year >= 2014 & year < 2018, 4, mandate_period),
+         mandate_period = if_else(year >= 2018, 5, mandate_period),
+         minority_dummy = if_else(majority == "Minority", 1, 0),
+         S_vote_share = as.numeric(S_vote_share),
+         M_vote_share = as.numeric(M_vote_share),
+         SD_vote_share= as.numeric(SD_vote_share)
+         ) %>% 
+  group_by(muni, mandate_period) %>% 
+  mutate(des_avg = mean(Beslut),
+         pop = mean(pop),
+         median_income = mean(median_income)) %>% 
+  ungroup() %>%
+  select(-Beslut, -year) %>% 
+  unique()
 
-#Pesaran CD test for cross-sectional dependence in panels
-pcdtest(m2_individual, test = "cd")
+diff_imputed <- avg_imputed %>% filter(mandate_period == 2 | mandate_period == 3)
 
-#Breusch-Godfrey/Wooldridge test for serial correlation in panel models
-pbgtest(m2_individual)
-pbgtest(m2_time)
+ols_imputed <- avg_imputed %>% filter(mandate_period == 5)
+
+#Models:
+bi_avg_robust_imputed <- plm(
+  log(des_avg+1) ~ minority_dummy,
+  data = avg_imputed,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+avg_robust_imputed <- plm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = avg_imputed,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+diff_robust_imputed <- plm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = diff_imputed,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
 
 
-#Hausman Tests
-phtest(m1, m1_random)
-phtest(m2, m2_random)
-phtest(m3, m3_random)
-phtest(m4, m4_random)
+ols_robust_imputed <- lm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share,
+  data = ols_imputed)
+
+gmm_robust_imputed <- pgmm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share | lag(log(des_avg+1), 2:5),
+  effect = "individual",
+  model = "twosteps",
+  transformation = "ld",
+  data = avg_imputed,
+  index = c("muni", "mandate_period"))
+summary(gmm_robust_imputed)
+
+se <- list(sqrt(diag(vcovHC(bi_avg_robust_imputed, type = "HC3"))),
+              sqrt(diag(vcovHC(avg_robust_imputed, type = "HC3"))),
+              sqrt(diag(vcovHC(diff_robust_imputed, type = "HC3"))),
+              sqrt(diag(vcovHC(ols_robust_imputed))),
+              sqrt(diag(vcovHC(gmm_robust_imputed)))
+           )
+
+stargazer(bi_avg_robust_imputed, avg_robust_imputed, diff_robust_imputed, ols_robust_imputed, gmm_robust_imputed,
+          se = se,
+          model.names = TRUE,
+          multicolumn = TRUE,
+          notes = "Municipality Clustered Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/Imputed_robust.html")
+
+pwartest(bi_avg_robust_imputed)
+pwartest(avg_robust_imputed)
+pwartest(diff_robust_imputed)
 ```
+
+```{r Strict}
+cook <- cooks.distance(lm(
+    log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+    data = avg_data))
+cook <- as.data.frame(cook) %>% 
+  mutate(muni = avg_data$muni,
+         mandate_period = avg_data$mandate_period) %>% 
+  filter(cook > 4/865) %>%
+  select(muni) %>%
+  unique()
+
+strict_filter <- chairman_des %>% 
+  group_by(Kommun, year) %>%
+  summarise(nDes = sum(Beslut)) %>%
+  mutate(has_na = any(is.na(nDes))) %>%
+  ungroup() %>%
+  filter(!has_na) %>% 
+  select(muni = Kommun) %>% 
+  unique()
+
+avg_strict <- primary %>% 
+  mutate(mandate_period = if_else(year >= 2002 & year < 2006, 1, 0),
+         mandate_period = if_else(year >= 2006 & year < 2010, 2, mandate_period),
+         mandate_period = if_else(year >= 2010 & year < 2014, 3, mandate_period),
+         mandate_period = if_else(year >= 2014 & year < 2018, 4, mandate_period),
+         mandate_period = if_else(year >= 2018, 5, mandate_period),
+         minority_dummy = if_else(majority == "Minority", 1, 0)
+         ) %>% 
+  group_by(muni, mandate_period) %>% 
+  mutate(des_avg = mean(nDes),
+         pop = mean(pop),
+         median_income = mean(median_income)) %>% 
+  filter(muni != "Göteborg",
+         muni %in% strict_filter$muni ) %>% 
+  ungroup() %>%
+  select(-nDes, -year) %>% 
+  unique() 
+  
+diff_data_strict <- avg_strict %>% filter(mandate_period == 2 | mandate_period == 3)
+
+ols_data_strict <- avg_strict %>% filter(mandate_period == 5)
+
+#Models:
+bi_robust_strict <- plm(
+  log(des_avg+1) ~ minority_dummy,
+  data = avg_strict,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+avg_robust_strict <- plm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = avg_strict,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+diff_robust_strict <- plm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = diff_data_strict,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+
+ols_robust_strict <- lm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share,
+  data = ols_data_strict)
+
+gmm_robust_strict <- pgmm(
+  log(des_avg+1) ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share | lag(log(des_avg+1), 2:5),
+  effect = "individual",
+  model = "twosteps",
+  transformation = "ld",
+  data = avg_strict,
+  index = c("muni", "mandate_period"))
+summary(gmm_robust_strict)
+
+
+se <- list(sqrt(diag(vcovHC(bi_robust_strict, type = "HC3"))),
+              sqrt(diag(vcovHC(avg_robust_strict, type = "HC3"))),
+              sqrt(diag(vcovHC(diff_robust_strict, type = "HC3"))),
+              sqrt(diag(vcovHC(ols_robust_strict))),
+              sqrt(diag(vcovHC(gmm_robust_strict)))
+           )
+
+stargazer(bi_robust_strict, avg_robust_strict, diff_robust_strict, ols_robust_strict, gmm_robust_strict,
+          se = se,
+          model.names = TRUE,
+          multicolumn = TRUE,
+          notes = "Municipality Clustered Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/Strict_robust.html")
+
+pwartest(bi_robust_strict)
+pwartest(avg_robust_strict)
+pwartest(diff_robust_strict)
+```
+
+```{r, dummy des}
+dummy_avg_data <- avg_data %>% mutate(dummy_avg = if_else(des_avg == 0, 0, 1))
+
+diff_dummy_data <- dummy_avg %>% filter(mandate_period == 2 | mandate_period == 3)
+
+ols_dummy_data <- dummy_avg %>% filter(mandate_period == 5)
+
+#Models:
+bi_avg_dummy <- plm(
+  dummy_avg ~ minority_dummy,
+  data = dummy_avg_data,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+avg_dummy <- plm(
+  dummy_avg ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = dummy_avg_data,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+diff_dummy <- plm(
+  dummy_avg ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share ,
+  data = diff_dummy_data,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+
+ols_dummy <- lm(
+  dummy_avg ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share,
+  data = ols_dummy_data)
+
+gmm_dummy <- pgmm(
+  dummy_avg ~ minority_dummy + log(pop) + median_income + S_length + M_length+S_vote_share+M_vote_share+SD_vote_share | lag(log(des_avg+1), 2:5),
+  effect = "individual",
+  model = "twosteps",
+  transformation = "ld",
+  data = dummy_avg_data,
+  index = c("muni", "mandate_period"))
+summary(gmm_dummy)
+
+
+se <- list(sqrt(diag(vcovHC(bi_avg_dummy, type = "HC3"))),
+              sqrt(diag(vcovHC(avg_dummy, type = "HC3"))),
+              sqrt(diag(vcovHC(diff_dummy, type = "HC3"))),
+              sqrt(diag(vcovHC(ols_dummy))),
+              sqrt(diag(vcovHC(gmm_dummy)))
+           )
+
+stargazer(bi_avg_dummy, avg_dummy, diff_dummy, ols_dummy, gmm_dummy,
+          se = se,
+          model.names = TRUE,
+          multicolumn = TRUE,
+          notes = "Municipality Clustered Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/Robust_dummy.html")
+
+pwartest(bi_avg_dummy)
+pwartest(avg_dummy)
+pwartest(diff_dummy)
+```
+

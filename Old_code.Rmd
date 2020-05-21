@@ -1449,4 +1449,183 @@ major_2006 <- tribble(
 
 
 
+#OLD MODELS
+```{r}
+#Model 1, basic regression
+m1_individual <- plm(
+  nDes ~ majority,
+  data = primary,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "year"))
+
+#Model 2, added geograpical features
+m2_individual <- plm(
+  nDes ~ majority + log(pop) + median_income + province,
+  data = primary,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "year"))
+
+#Model 3, added political parties in rule
+m3_individual <- plm(
+  nDes ~ majority + log(pop) + median_income + province + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
+  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length,
+  data = primary,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "year"))
+
+
+se1 <- list(sqrt(diag(vcovHC(m1_individual, type = "HC3"))),
+              sqrt(diag(vcovHC(m2_individual, type = "HC3"))),
+              sqrt(diag(vcovHC(m3_individual, type = "HC3"))))
+
+stargazer(m1_individual, m2_individual, m3_individual,
+          se = se1,
+          notes = "Municipality Clustered Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/Basic_Models.html")
+```
+
+### Testing the models
+```{r}
+## New tests!
+#Wooldridge's test for serial correlation in FE panels
+pwartest(m1_individual)
+pwartest(m2_individual)
+pwartest(m3_individual)
+
+
+m1_individual_avg_period <- plm(
+  log(des_avg+1) ~ majority,
+  data = wooldridge,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+m2_individual_avg_period <- plm(
+  log(des_avg+1) ~ majority + log(pop) + median_income + factor(province),
+  data = wooldridge,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+m3_individual_avg_period <- plm(
+  log(des_avg+1) ~ majority + log(pop) + median_income + province + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
+  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length,
+  data = wooldridge,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+se2 <- list(sqrt(diag(vcovHC(m1_individual_avg_period, type = "HC3"))),
+            sqrt(diag(vcovHC(m2_individual_avg_period, type = "HC3"))),
+            sqrt(diag(vcovHC(m3_individual_avg_period, type = "HC3"))))
+
+stargazer(m1_individual_avg_period, m2_individual_avg_period, m3_individual_avg_period,
+          se = se2,
+          notes = "Municipality Clustered Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/Average_period.html")
+
+pwartest(m1_individual_avg_period)
+pwartest(m2_individual_avg_period)
+pwartest(m3_individual_avg_period)
+```
+
+```{r}
+
+
+m1_individual_diff <- plm(
+  log(des_avg+1) ~ majority,
+  data = w2,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+m2_individual_diff <- plm(
+  log(des_avg+1) ~ majority + log(pop) + median_income,
+  data = w2,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+m3_individual_diff <- plm(
+  log(des_avg+1) ~ majority + log(pop) + median_income + province + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + 
+  M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length,  
+  data = w2,
+  model = "within",
+  effect = "individual",
+  index = c("muni", "mandate_period"))
+
+
+se3 <- list(sqrt(diag(vcovHC(m1_individual_diff, type = "HC3"))),
+            sqrt(diag(vcovHC(m2_individual_diff, type = "HC3"))),
+            sqrt(diag(vcovHC(m3_individual_diff, type = "HC3"))))
+
+stargazer(m1_individual_diff, m2_individual_diff, m3_individual_diff,
+          se = se3,
+          notes = "Municipality Clustered Standard Error in Parenthesis",
+          type = "html",
+          out = "./Regressions/diff_model.html")
+
+pwartest(m1_individual_diff)
+pwartest(m2_individual_diff)
+pwartest(m3_individual_diff)
+```
+
+```{r}
+m1_gmm <- pgmm(log(des_avg+1) ~ minority_dummy | lag(log(des_avg+1), 2:99),
+              effect = "individual",
+              model = "twosteps",
+              transformation = "ld",
+              data = wooldridge,
+              index = c("muni", "mandate_period"))
+
+
+
+summary(pgmm(log(des_avg+1) ~ minority_dummy+ log(pop) + median_income + lag(log(des_avg+1))  | lag(log(des_avg+1), 2:99),
+              effect = "individual",
+              model = "twosteps",
+              transformation = "ld",
+              data = wooldridge,
+              index = c("muni", "mandate_period")))
+
+summary(pgmm(log(des_avg+1) ~ minority_dummy +factor(mandate_period) | lag(log(des_avg+1), 2:99),
+              effect = "individual",
+              model = "twosteps",
+              transformation = "ld",
+              data = wooldridge,
+              index = c("muni", "mandate_period")))
+
+
+
+
+m2_gmm <- pgmm(log(des_avg+1) ~ minority_dummy + log(pop) + median_income | lag(log(des_avg+1), 2:99),
+              effect = "individual",
+              model = "twosteps",
+              transformation = "ld",
+              data = wooldridge,
+              index = c("muni", "mandate_period"))
+
+m3_gmm <- pgmm(log(des_avg+1) ~ minority_dummy + log(pop) + median_income + nRule + C_part_of_rule + L_part_of_rule + KD_part_of_rule + MP_part_of_rule + M_part_of_rule + S_part_of_rule + SD_part_of_rule + V_part_of_rule + other_part_of_rule + C_length + L_length + KD_length + MP_length + M_length +   S_length + SD_length + V_length + other_length | lag(log(des_avg+1), 2:99),
+              effect = "individual",
+              model = "twosteps",
+              transformation = "ld",
+              data = wooldridge,
+              index = c("muni", "mandate_period"))
+
+stargazer(m1_gmm, m2_gmm, m3_gmm,
+          type = "html",
+          notes = "Robust Standard Errors in parenthesis",
+          out = "./Regressions/gmm_model.html")
+
+
+summary(m1_gmm)
+summary(m2_gmm)
+summary(m3_gmm)
+    
+```
+
 
